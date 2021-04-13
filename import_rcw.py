@@ -64,9 +64,15 @@ for title in titles:
             # print("full", full_text)
             if len(divs) == full_div + 1:
                 continue
-            raw_citations = divs[full_div+1].text.strip("[] .").split(";")
+            full_citations = divs[full_div+1].text
+            full_citations = full_citations.replace("(i)", "").replace("(ii)", "")
+            full_citations = full_citations.replace("(1)", "").replace("(2)", "") 
+            full_citations = full_citations.replace(". Prior:", ";")
+            raw_citations = full_citations.strip("[] .").split(";")
             if not raw_citations:
                 continue
+            if ". Formerly RCW" in raw_citations[-1]:
+                raw_citations[-1] = raw_citations[-1].split(". Formerly RCW")[0]
             history = [x.strip() for x in raw_citations]
             links = {}
             for link in divs[full_div+1].find_all("a"):
@@ -75,16 +81,24 @@ for title in titles:
             for citation in history:
                 if "repealed by" in citation:
                     cs = citation.strip("()").split(" repealed by ")
+                elif "expired" in citation:
+                    print(citation)
+                    cs = citation.strip("()").split(" expired ")[:1]
                 else:
                     cs = [citation]
                 for c in cs:
                     citations.append((c, links.get(c, None)))
-                    all_citations.add(c.split("§")[0].strip())
+                    c = c.strip("()")
+                    chapter_citation = c.split("§")[0].strip()
+                    if chapter_citation.startswith("1 H.C."):
+                        print(c)
+                        raise RuntimeError()
+                    all_citations.add(chapter_citation)
 
             print()
     #print(titles)
 
 ordered = sorted(all_citations)
 print(len(ordered))
-print(ordered[:100])
+print(ordered[:2000])
 
