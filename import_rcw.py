@@ -1,6 +1,9 @@
 import string
+import pathlib
 import requests_cache
+import re
 import sqlite3
+import sys
 from bs4 import BeautifulSoup
 
 rcw_root_url = "https://apps.leg.wa.gov/rcw/"
@@ -18,11 +21,13 @@ for row in sections.find_all("tr"):
     link = data[0].find("a")
     directory_name = link.text[len("Title "):]
     title_name = data[1].text.strip()
-    print(link["href"], directory_name, title_name)
     titles[directory_name] = {"link": link["href"], "title": title_name, "chapters": {}}
 
 all_citations = set()
 
+section_pattern = re.compile("\\(([a-z]+|[0-9]+)\\)")
+
+count = 0
 for title in titles:
     print("title", title)
     info = titles[title]
@@ -31,12 +36,10 @@ for title in titles:
     for row in table.find_all("tr"):
         link = row.find("a")
         section_info = {}
-        info["chapters"][link.text] = {"link": link["href"] + "&full=true",
-                                       "title": data[1].text.strip(),
-                                       "sections": section_info}
-        print(link["href"], link.text)
         data = row.find_all("td")
-        print(data[1].text)
+        info["chapters"][link.text.strip()] = {"link": link["href"] + "&full=true",
+                                               "title": data[1].text.strip(),
+                                               "sections": section_info}
 
         chapter = BeautifulSoup(requests.get(link["href"] + "&full=true").text, 'html.parser')
         sections = chapter.find(id="ContentPlaceHolder1_dlSectionContent")
@@ -58,7 +61,7 @@ for title in titles:
             full_text = [d.text for d in divs[full_div].find_all("div")]
             citations = []
             section_info[number] = {"title": name, "body": full_text, "citations": citations}
-            print(number, name)
+            # print(number, name)
             # if number == "2.36.010":
             #     print(section.prettify())
             # print("full", full_text)
@@ -82,7 +85,6 @@ for title in titles:
                 if "repealed by" in citation:
                     cs = citation.strip("()").split(" repealed by ")
                 elif "expired" in citation:
-                    print(citation)
                     cs = citation.strip("()").split(" expired ")[:1]
                 else:
                     cs = [citation]
@@ -90,15 +92,75 @@ for title in titles:
                     citations.append((c, links.get(c, None)))
                     c = c.strip("()")
                     chapter_citation = c.split("§")[0].strip()
-                    if chapter_citation.startswith("1 H.C."):
-                        print(c)
-                        raise RuntimeError()
                     all_citations.add(chapter_citation)
 
-            print()
+            # print()
     #print(titles)
+    if count > 9:
+        break
+    count += 1
 
 ordered = sorted(all_citations)
-print(len(ordered))
-print(ordered[:2000])
+print("total citations", len(ordered))
+# print(ordered[:2000])
+
+def filename_friendly(n):
+    return n.lower().replace(" ", "_").replace(".", "").replace(",", "").replace("/", "_").replace("'", "")
+
+root = pathlib.Path(sys.argv[1])
+top_readme = root / "README.md"
+with top_readme.open("w") as rm:
+    for title in titles:
+        info = titles[title]
+        if len(title) == 1 or title == "9A":
+            title = "0" + title
+        title_folder_name = title + "_" + filename_friendly(info["title"])
+        title_folder = root / title_folder_name
+        title_folder.mkdir(exist_ok=True)
+        title_readme = title_folder / "README.md"
+        rm.write("* [" + title + " - " + info["title"] + "](" + str(title_folder_name) + ")\n")
+        with title_readme.open("w") as tf:
+            tf.write("# ")
+            tf.write(title + " " + info["title"])
+            tf.write("\n\n")
+            for chapter in info["chapters"]:
+                chapter_info = info["chapters"][chapter]
+                chapter_name = chapter + "_" + filename_friendly(chapter_info["title"]) + ".md"
+                chapter_path = title_folder / chapter_name
+                link_path = str(chapter_name)
+                tf.write("* [" + chapter + " - " + chapter_info["title"] + "](" + link_path + ")\n")
+                with chapter_path.open("w") as f:
+                    f.write("# " + chapter + " - " + chapter_info["title"] + "\n\n")
+                    f.write("[[_TOC_]]\n\n")
+                    for section in chapter_info["sections"]:
+                        section_info = chapter_info["sections"][section]
+                        f.write("## ")
+                        f.write(section)
+                        f.write(" - ")
+                        f.write(section_info["title"])
+                        f.write("\n")
+                        first = True
+                        for paragraph in section_info["body"]:
+                            last_end = 0
+                            for result in section_pattern.finditer(paragraph):
+                                if first:
+                                    print(section, paragraph)
+                                    first = False
+                                if result.start() != last_end:
+                                    break
+                                last_end = result.end()
+                                print(section, result.group(1))
+                            f.write(paragraph)
+                            f.write("\n\n")
+                        if not first:
+                            print()
+                        f.write("\\[")
+                        for citation in section_info["citations"]:
+                            if citation[1]:
+                                escaped_link = citation[1].replace(" ", "%20")
+                                f.write(f"[{citation[0]}]({escaped_link}); ")
+                            else:
+                                f.write(f"{citation[0]}; ")
+
+                        f.write("\\]\n")
 
