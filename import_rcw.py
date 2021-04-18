@@ -96,71 +96,94 @@ for title in titles:
 
             # print()
     #print(titles)
-    if count > 9:
-        break
+    # if count > 9:
+    #     break
     count += 1
 
 ordered = sorted(all_citations)
 print("total citations", len(ordered))
 # print(ordered[:2000])
 
+def pad_number(n, l):
+    if "." not in n:
+        prefix = ""
+        suffix = n
+    else:
+        prefix, suffix = n.rsplit(".", maxsplit=1)
+        prefix += "."
+    pad = ""
+    stripped = suffix.strip(string.ascii_uppercase)
+    if len(stripped) < l:
+        pad = "0" * (l - len(stripped))
+    return prefix + pad + suffix
+
 def filename_friendly(n):
     return n.lower().replace(" ", "_").replace(".", "").replace(",", "").replace("/", "_").replace("'", "")
 
 root = pathlib.Path(sys.argv[1])
-top_readme = root / "README.md"
+top_readme = root / "README.adoc"
 with top_readme.open("w") as rm:
     for title in titles:
         info = titles[title]
-        if len(title) == 1 or title == "9A":
-            title = "0" + title
-        title_folder_name = title + "_" + filename_friendly(info["title"])
+        title_folder_name = pad_number(title, 2) + "_" + filename_friendly(info["title"])
         title_folder = root / title_folder_name
         title_folder.mkdir(exist_ok=True)
-        title_readme = title_folder / "README.md"
-        rm.write("* [" + title + " - " + info["title"] + "](" + str(title_folder_name) + ")\n")
+        title_readme = title_folder / "README.adoc"
+        rm.write("* link:" + str(title_folder_name) + "[" + title + " - " + info["title"] + "]\n")
         with title_readme.open("w") as tf:
-            tf.write("# ")
+            tf.write("= ")
             tf.write(title + " " + info["title"])
             tf.write("\n\n")
+
+            max_len = 0
+            for chapter in info["chapters"]:
+                max_len = max(max_len, len(chapter.rsplit(".", maxsplit=1)[-1].strip(string.ascii_uppercase)))
             for chapter in info["chapters"]:
                 chapter_info = info["chapters"][chapter]
-                chapter_name = chapter + "_" + filename_friendly(chapter_info["title"]) + ".md"
+                chapter_name = pad_number(chapter, max_len) + "_" + filename_friendly(chapter_info["title"]) + ".adoc"
                 chapter_path = title_folder / chapter_name
                 link_path = str(chapter_name)
-                tf.write("* [" + chapter + " - " + chapter_info["title"] + "](" + link_path + ")\n")
+                tf.write("* link:" + link_path + "[" + chapter + " - " + chapter_info["title"] + "]\n")
                 with chapter_path.open("w") as f:
-                    f.write("# " + chapter + " - " + chapter_info["title"] + "\n\n")
-                    f.write("[[_TOC_]]\n\n")
+                    f.write("= " + chapter + " - " + chapter_info["title"] + "\n")
+                    f.write(":toc:\n\n")
+
                     for section in chapter_info["sections"]:
                         section_info = chapter_info["sections"][section]
-                        f.write("## ")
+                        f.write("== ")
                         f.write(section)
                         f.write(" - ")
                         f.write(section_info["title"])
                         f.write("\n")
                         first = True
+                        last_group = ""
                         for paragraph in section_info["body"]:
                             last_end = 0
                             for result in section_pattern.finditer(paragraph):
-                                if first:
-                                    print(section, paragraph)
-                                    first = False
                                 if result.start() != last_end:
                                     break
+                                if last_end > 0:
+                                    f.write(" [Empty]\n")
                                 last_end = result.end()
-                                print(section, result.group(1))
-                            f.write(paragraph)
+                                group = result.group(1)
+                                if group.isnumeric():
+                                    f.write(".")
+                                elif group[0] == "i" and last_group != "h":
+                                    f.write("...")
+                                else:
+                                    f.write("..")
+                                last_group = group
+                                if first:
+                                    first = False
+                            f.write(paragraph[last_end:])
                             f.write("\n\n")
-                        if not first:
-                            print()
-                        f.write("\\[")
+                        f.write("[")
                         for citation in section_info["citations"]:
                             if citation[1]:
                                 escaped_link = citation[1].replace(" ", "%20")
-                                f.write(f"[{citation[0]}]({escaped_link}); ")
+                                f.write(f"{escaped_link}[{citation[0]}]; ")
                             else:
                                 f.write(f"{citation[0]}; ")
 
-                        f.write("\\]\n")
+                        f.write("]\n\n")
 
