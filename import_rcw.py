@@ -177,7 +177,7 @@ with top_readme.open("w") as rm:
                                     first = False
                             f.write(paragraph[last_end:])
                             f.write("\n\n")
-                        f.write("[")
+                        f.write("[ ")
                         for citation in section_info["citations"]:
                             if citation[1]:
                                 escaped_link = citation[1].replace(" ", "%20")
