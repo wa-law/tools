@@ -155,7 +155,6 @@ with top_readme.open("w") as rm:
                         f.write(" - ")
                         f.write(section_info["title"])
                         f.write("\n")
-                        first = True
                         last_group = ""
                         for paragraph in section_info["body"]:
                             last_end = 0
@@ -173,8 +172,6 @@ with top_readme.open("w") as rm:
                                 else:
                                     f.write("..")
                                 last_group = group
-                                if first:
-                                    first = False
                             f.write(paragraph[last_end:])
                             f.write("\n\n")
                         f.write("[ ")
