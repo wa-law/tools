@@ -8,7 +8,7 @@ from bs4 import BeautifulSoup
 
 rcw_root_url = "https://apps.leg.wa.gov/rcw/"
 
-requests = requests_cache.CachedSession("cache")
+requests = requests_cache.CachedSession("rcw_cache")
 
 root = requests.get(rcw_root_url)
 
@@ -58,13 +58,13 @@ for title in titles:
             full_div = 2
             if "CHANGE IN" in divs[full_div].text:
                 full_div = 3
-            full_text = [d.text for d in divs[full_div].find_all("div")]
+            full_text = [d.text.replace("  ", " ") for d in divs[full_div].find_all("div")]
             citations = []
             section_info[number] = {"title": name, "body": full_text, "citations": citations}
             # print(number, name)
-            # if number == "2.36.010":
-            #     print(section.prettify())
-            # print("full", full_text)
+            # if number == "35A.80.010":
+            #     print(section)
+            #     print("full", full_text)
             if len(divs) == full_div + 1:
                 continue
             full_citations = divs[full_div+1].text
@@ -123,6 +123,8 @@ def filename_friendly(n):
 root = pathlib.Path(sys.argv[1])
 top_readme = root / "README.adoc"
 with top_readme.open("w") as rm:
+    rm.write("# Revised Code of Washington\n")
+    rm.write("Welcome to the git version of the Revised Code of Washington (RCW). It is an *unofficial* copy derived from http://apps.leg.wa.gov/rcw/[the official website]. This root commit will stay the same but all others may change if/when we import historical changes. Tags will be redone as things change so they should be stable.\n\n")
     for title in titles:
         info = titles[title]
         title_folder_name = pad_number(title, 2) + "_" + filename_friendly(info["title"])

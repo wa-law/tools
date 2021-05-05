@@ -3,10 +3,13 @@ from bs4 import BeautifulSoup, NavigableString
 import re
 import pathlib
 import sys
+import subprocess
+
+PUSH = False
 
 api_root_url = "http://wslwebservices.leg.wa.gov"
 
-requests = requests_cache.CachedSession("cache")
+requests = requests_cache.CachedSession("bill_cache")
 
 rcw_pattern = re.compile("RCW  ([0-9A-Z]+)\\.([0-9A-Z]+)\\.([0-9A-Z]+)")
 chapter_pattern = re.compile("([0-9A-Z]+)\\.([0-9A-Z]+) RCW")
@@ -43,6 +46,9 @@ for p in pathlib.Path(sys.argv[1]).iterdir():
             chapter_files[title][chapter] = chapter_file
 
 section_pattern = re.compile("\\(([a-z]+|[0-9]+)\\)")
+
+sections_through_pattern = re.compile("([0-9]+) through ([0-9]+)")
+sections_pattern = re.compile("([0-9]+)")
 
 def format_lists(paragraph):
     new_paragraph = []
@@ -114,6 +120,27 @@ def add_section(citation, section_citation, new_text):
     new_chapter.append("")
     f.write_text("\n".join(new_chapter))
 
+def new_chapter(citation, chapter_name, contents):
+    print(chapter_name)
+    f = title_folders[citation[0]] / (chapter_name.replace(" ", "_") + ".adoc")
+    chapter = [
+        f"= {citation[0]}.XXX - {chapter_name}",
+        ":toc:",
+        ""
+    ]
+    for section_citation, section_number, contents in contents:
+        chapter.append(f"== {citation[0]}.XXX.{section_number} - TBD")
+        chapter.extend(format_lists(contents))
+        chapter.append("")
+        chapter.append("[ " + section_citation + "; ]")
+        chapter.append("")
+    f.write_text("\n".join(chapter))
+    run("git add " + str(f.relative_to(sys.argv[1])))
+
+def run(command, stdin="", env={}):
+    print(command)
+    return subprocess.run(command, shell=True, env=env, check=True, cwd=pathlib.Path(sys.argv[1]), input=stdin, encoding="utf-8")
+
 for start_year in range(2021, 2023, 2):
     biennium = f"{start_year:4d}-{(start_year+1) % 100:02d}"
     print(biennium)
@@ -135,7 +162,7 @@ for start_year in range(2021, 2023, 2):
     for info in sponsors.find_all("Member"):
         # if count == 0:
         #     print(info)
-        sponsors_by_id[info.Id.text] = info.Email.text
+        sponsors_by_id[info.Id.text] = info
         count += 1
     print(count, "sponsors")
 
@@ -234,39 +261,51 @@ for start_year in range(2021, 2023, 2):
         print(count, "amendments")
 
     for sponsor in bills_by_sponsor:
-        if sponsor != "16499":
+        if sponsor != "16499" and sponsor != "27211":
             continue
-        print(sponsor, sponsors_by_id[sponsor])
+        sponsor_info = sponsors_by_id[sponsor]
+        print(sponsor_info)
+        sponsor_name = sponsor_info.Name.text
+        sponsor_email = sponsor_info.Email.text.lower().replace("@leg.wa.gov", "@wa-law.org")
+        gitlab_user = sponsor_info.Email.text.lower().split("@")[0]
+        commit_env = {
+            "GIT_AUTHOR_NAME": sponsor_name,
+            "GIT_COMMITTER_NAME": sponsor_name,
+            "GIT_AUTHOR_EMAIL": sponsor_email,
+            "GIT_COMMITTER_EMAIL": sponsor_email,
+            "GIT_SSH_COMMAND": f"ssh -i ~/repos/wa-law-tools/.ssh/{gitlab_user} -o IdentitiesOnly=yes"
+        }
         for bill_number in bills_by_sponsor[sponsor]:
             # Ignore follow up legislation info for now.
             bill = bills_by_sponsor[sponsor][bill_number][0]
             bill_id = bill.BillId.text
-            if "1336" not in bill_id:
-                continue
             print(bill_id, bill.ShortDescription.text)
             print(bill.LongDescription.text)
             print(bill.HistoryLine.text)
+            run("git checkout 2020H2")
+            bill_branch = "2021." + bill_id.replace(" ", ".")
+            run("git switch -C " + bill_branch)
             # print(bill.CurrentStatus.IntroducedDate.text, bill.CurrentStatus.ActionDate.text)
             # print(bill.CurrentStatus.Status.text)
             if bill_number in amendments_by_bill_number:
                 for amendment in amendments_by_bill_number[bill_number]:
-                    print(amendment.Name.text, amendment.SponsorName.text, amendment.Description.text, amendment.FloorAction.text)
+                    # print(amendment.Name.text, amendment.SponsorName.text, amendment.Description.text, amendment.FloorAction.text)
                     # print(amendment)
                     # print()
                     url = amendment.PdfUrl.text
                     url = url.replace("Pdf", "Xml").replace("pdf", "xml")
                     # print(url)
-                    response = requests.get(url)
+                    # response = requests.get(url)
                     # if not response.ok:
                     #     print("missing xml version")
                     #     print(amendment)
-                    amendment_text = BeautifulSoup(response.content, 'xml')
-                    for section in amendment_text.find_all("AmendSection"):
-                        # print(section.AmendItem.P.text)
-                        new_sections = section.find_all("BillSection")
-                        # if not new_sections:
-                        #     print(section)
-                        #print()
+                    # amendment_text = BeautifulSoup(response.content, 'xml')
+                    # for section in amendment_text.find_all("AmendSection"):
+                    #     # print(section.AmendItem.P.text)
+                    #     new_sections = section.find_all("BillSection")
+                    #     if not new_sections:
+                    #         print(section)
+                    #     print()
                     #print(amendment)
                     # print()
                     # print()
@@ -277,10 +316,25 @@ for start_year in range(2021, 2023, 2):
                 for doc in docs_by_number[bill_number]:
                     url = doc.PdfUrl.text
                     url = url.replace("Pdf", "Xml").replace("pdf", "xml")
-                    print(doc.Name.text, doc.PdfLastModifiedDate.text, url)
+                    commit_date = doc.PdfLastModifiedDate.text
+                    commit_env["GIT_AUTHOR_DATE"] = commit_date
+                    commit_env["GIT_COMMITTER_DATE"] = commit_date
+                    commit_message = []
+                    print(doc.Name.text, commit_date, url)
+                    if doc.ShortFriendlyName.text == "Original Bill":
+                        commit_message.append(bill_id + " " + bill.ShortDescription.text)
+                        commit_message.append("")
+                        commit_message.append(bill.LongDescription.text)
+                    else:
+                        commit_message.append(doc.ShortFriendlyName.text)
+                        commit_message.append("")
+                        commit_message.append(doc.LongFriendlyName.text)
+                    commit_message.append("")
+                    commit_message.append("Sourced from: " + url.replace(" ", "%20"))
                     print(doc.ShortFriendlyName.text)
                     print(doc.LongFriendlyName.text)
                     print()
+                    run("git checkout 2020H2 .")
                     text = requests.get(url).content
                     bill_text = BeautifulSoup(text, 'xml')
                     sections = {}
@@ -314,7 +368,11 @@ for start_year in range(2021, 2023, 2):
                                 line = []
                                 for child in paragraph.children:
                                     if isinstance(child, NavigableString):
-                                        line.append(str(child))
+                                        s = str(child)
+                                        # Only non-whitespace strings. Don't always strip though
+                                        # because we want the spaces on the edge of text.
+                                        if s.strip():
+                                            line.append(s)
                                     else:
                                         if child.name != "TextRun":
                                             if child.name == "SectionCite":
@@ -328,7 +386,7 @@ for start_year in range(2021, 2023, 2):
                                             # print("no amend style", child.name, child)
                                             pass
                                         elif child["amendingStyle"] in AMEND_INCLUDE:
-                                            line.append(child.text)
+                                            line.append(child.text.strip())
                                 if line:
                                     section_lines.append("".join(line))
                             amend_section(get_citation(section), section_citation, section_lines)
@@ -340,9 +398,16 @@ for start_year in range(2021, 2023, 2):
                             add_section(get_citation(section), section_citation, section_lines)
                             sections_handled += 1
                         elif section["action"] == "addchap":
-                            # print("add chapter to", get_citation(section))
-                            # print(section.P.text)
-                            pass
+                            c = get_citation(section)
+                            new_chapters[c] = set()
+                            print("add chapter to", )
+                            text = section.P.text.split("of this act")[0]
+                            for m in sections_pattern.finditer(text):
+                                new_chapters[c].add(m[0])
+                            for m in sections_through_pattern.finditer(text):
+                                new_chapters[c].update((str(x) for x in range(int(m[1]), int(m[2]))))
+                            print(text)
+                            print(new_chapters[c])
                         elif section["action"] == "addmultisect":
                             # print("add chapter to", get_citation(section))
                             # print(section.P.text)
@@ -382,8 +447,32 @@ for start_year in range(2021, 2023, 2):
                         else:
                             print(section, section.attrs)
                     print(f"{sections_handled}/{section_count}")
-                    print(sections)
-                    break
+                    if new_chapters:
+                        for c in new_chapters:
+                            contents = []
+                            chapter_name = ""
+                            chapter_sections = sorted(new_chapters[c], key=int)
+                            print(chapter_sections)
+                            for section in chapter_sections:
+                                section_citation = f"2021 c XXX § {section}"
+                                contents.append((section_citation, section, sections.pop(section)))
+                                if contents[-1][2][0].startswith("This chapter shall be known and cited as the "):
+                                    chapter_name = contents[-1][2][0].split("the ", maxsplit=1)[1].strip(".")
+                            if not chapter_name:
+                                raise RuntimeError()
+                            new_chapter(c, chapter_name, contents)
+                            print()
+                            print()
+                    if sections:
+                        commit_message.append("")
+                        for section_number in sections:
+                            print(section_number, sections[section_number])
+                            commit_message.append("Section " + section_number + ". " + "\n".join(sections[section_number]))
+
+                    run(f"git commit -a --no-signoff --no-gpg-sign --file=-", stdin="\n".join(commit_message), env=commit_env)
+                # Push the branch
+                if PUSH:
+                    run(f"git push -f {gitlab_user} {bill_branch}", env=commit_env)
             print()
 
 

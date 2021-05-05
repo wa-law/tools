@@ -1,2 +1,4 @@
-cache.sqlite
+*cache.sqlite
+.ssh
+*.sublime*
 
